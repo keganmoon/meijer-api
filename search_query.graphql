@@ -1,0 +1,167 @@
+
+    query ProductSearchQuery($args: SearchArgsInput!, $filters: [ProductFilterInput!], $sort: ProductSortInput, $context: ProductQueryContextInput!, $first: Int, $after: String, $storeId: Int!, $includeThirdParty: Boolean!, $userIdentity: UserIdentityInput) {
+  productSearch(
+    args: $args
+    context: $context
+    filters: $filters
+    sort: $sort
+    userIdentity: $userIdentity
+  ) {
+    __typename
+    ... on RedirectResult {
+      url
+    }
+    ... on ProductsResult {
+      spaEnrichmentMetaData {
+        criteoBeacons {
+          onLoadBeacon
+          onViewBeacon
+          placementName
+        }
+      }
+      itemConnection(first: $first, after: $after) {
+        items {
+          __typename
+          ... on ProductExtended {
+            productName
+            isSponsored
+            attribution {
+              onViewBeacons
+              onClickBeacons
+              onLoadBeacons
+              onBasketChangeBeacon
+              demandSources
+            }
+            eventType
+            hasMPerks
+            isAlcohol
+            isBopas
+            isBusinessActive
+            isChokingHazard
+            isFoodStampEligible
+            isHomeDeliveryAvailable
+            isPrimaryUpc
+            isProductAgeRestricted
+            mPerksOfferId
+            productId
+            thumbnailImage {
+              url
+            }
+            soldByUnit
+            soldByUnitDescription
+            unitOfMeasureQuantity
+            upc
+            upcTypeName
+            updatedAt
+            maxOrderQuantity
+            isCurbsideEligible
+            isPriceByWeight
+            isThirdPartyShipping
+            thirdPartyOffers @include(if: $includeThirdParty) {
+              itemPriceExcludingShipping
+              minShippingPrice
+              returnPolicyTitle
+              sellerId
+              sellerName
+              thirdPartyOfferId
+              availableStartDate
+              availableEndDate
+            }
+            storeSpecificProductDetails(storeId: $storeId) {
+              productRules {
+                isWicEligible
+              }
+              productStore {
+                isOnSale
+                isPriceDisplayable
+                savingsDescription
+                priceDescription
+                basePrice
+                basePricePerSoldByUnit
+                customerPrice
+                customerPricePerSoldByUnit
+                discountValuePerSoldByUnit
+                discountValue
+                soldByUnit
+                avgSoldByUnitsPerPricingUnit
+                avgPricingUnitsPerSoldByUnit
+                unitOfMeasureQuantity
+                percentageOff
+                dollarOff
+                ageLimit
+                buyQuantity
+                clearancePrice
+                clearancePricePerSoldByUnit
+                pricingUnit
+                promotionPrice
+                sellQuantity
+                depositValue
+                priceText
+              }
+              productStoreInventory {
+                stockStatus
+                ilcPrimary
+                ilcs
+              }
+              promotions {
+                displayText
+              }
+            }
+          }
+        }
+        totalCount
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+      sortOptions {
+        sortBy
+        displayName
+        sortOrder
+        status
+      }
+      filterOptions {
+        displayName
+        name
+        selectionType
+        hidden
+        options {
+          displayName
+          value
+          status
+          count
+        }
+      }
+      groupFilterOptions {
+        displayName
+        groupId
+        count
+        children {
+          displayName
+          groupId
+          count
+          parents {
+            displayName
+            groupId
+            count
+          }
+        }
+        parents {
+          displayName
+          groupId
+          count
+        }
+      }
+      resultCounts {
+        embeddingsMatch
+        tokenMatch
+        totalCount
+      }
+      collection {
+        displayName
+      }
+    }
+  }
+}
+    
