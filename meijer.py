@@ -22,8 +22,9 @@ COOKIE_FILE = HERE / ".cookies.json"
 QUERY_FILE = HERE / "search_query.graphql"
 BASE = "https://www.meijer.com"
 GQL = "https://digital.meijer.com/graphql/"
-CDP = "http://127.0.0.1:9444"
-PROFILE_DIR = Path.home() / ".local/share/meijer-automation-profile"
+CDP_PORT = int(os.environ.get("MEIJER_CDP_PORT", "9444"))
+CDP = f"http://127.0.0.1:{CDP_PORT}"
+PROFILE_DIR = Path(os.environ.get("MEIJER_PROFILE_DIR", Path.home() / ".local/share/meijer-automation-profile"))
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
 
 
@@ -40,19 +41,54 @@ def _browser_running():
         return False
 
 
+def find_browser():
+    """Pick a Chromium binary. Order: $MEIJER_BROWSER, a system Chromium-family browser,
+    then Playwright's bundled Chromium (downloaded on demand — no system browser needed)."""
+    import shutil
+    if os.environ.get("MEIJER_BROWSER"):
+        return os.environ["MEIJER_BROWSER"]
+    for name in ("brave-browser", "google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge"):
+        if shutil.which(name):
+            return shutil.which(name)
+    return playwright_chromium()
+
+
+def playwright_chromium():
+    """Path to Playwright's Chromium, installing it (~150 MB, one time) if absent."""
+    try:
+        from playwright._impl._driver import compute_driver_executable  # noqa: F401
+    except ImportError:
+        raise RuntimeError("No Chromium-family browser found and `playwright` is not installed. "
+                           "Run: pip install playwright && python -m playwright install chromium")
+    def _find():
+        import glob
+        root = os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or str(Path.home() / ".cache/ms-playwright")
+        hits = sorted(glob.glob(f"{root}/chromium-*/chrome-linux*/chrome")) + sorted(glob.glob(f"{root}/chromium-*/chrome-mac*/Chromium.app/Contents/MacOS/Chromium")) + sorted(glob.glob(f"{root}/chromium-*/chrome-win/chrome.exe"))
+        return hits[-1] if hits else None
+    exe = _find()
+    if not exe:
+        print("Downloading Chromium via Playwright (one time)...", file=sys.stderr)
+        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+        exe = _find()
+    if not exe:
+        raise RuntimeError("playwright install chromium ran but no binary was found")
+    return exe
+
+
 def launch_browser(url=f"{BASE}/"):
     if _browser_running():
         return
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    exe = find_browser()
     subprocess.Popen(
-        ["brave-browser", "--remote-debugging-port=9444", f"--user-data-dir={PROFILE_DIR}",
-         "--no-first-run", "--no-default-browser-check", url],
+        [exe, f"--remote-debugging-port={CDP_PORT}", f"--user-data-dir={PROFILE_DIR}",
+         "--no-first-run", "--no-default-browser-check", "--disable-features=TranslateUI", url],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     for _ in range(30):
         if _browser_running():
             return
         time.sleep(1)
-    raise RuntimeError("Brave did not come up on :9444")
+    raise RuntimeError(f"{exe} did not come up on :{CDP_PORT}")
 
 
 def harvest_cookies():
@@ -172,8 +208,10 @@ def userstate(s):
     return _check(s.get(f"{BASE}/bin/meijer/cart/userstate", params={"timestamp": int(time.time() * 1000)}))
 
 
-def get_cart(s):
-    return _check(s.get(f"{BASE}/bin/meijer/getcart", params={"calculateForLC": "false", "timestamp": int(time.time() * 1000)}))
+def get_cart(s, calculate=True):
+    """calculateForLC=true forces Meijer to recompute totals (otherwise totalPrice can be stale
+    after adds/removes); the site's own cart page uses true."""
+    return _check(s.get(f"{BASE}/bin/meijer/getcart", params={"calculateForLC": "true" if calculate else "false", "timestamp": int(time.time() * 1000)}))
 
 
 def cart_entries(cart):
@@ -181,8 +219,9 @@ def cart_entries(cart):
     for g in cart.get("cartGroups", []):
         for e in g["entries"]:
             p = e["product"]
-            out.append({"entry": e["entryNumber"], "qty": e.get("quantityValue") or e["quantity"], "upc": p["code"], "name": p["name"],
-                        "unit": e.get("unit"), "avg_lb_each": float(e.get("avgPoundsEach") or 0) or None,
+            out.append({"entry": e["entryNumber"], "qty": (e.get("quantityValue") if e.get("unit") == "LB" else None) or e["quantity"], "upc": p["code"], "name": p["name"],
+                        "unit": e.get("unit"),
+                        "avg_lb_each": (float(e.get("avgPoundsEach") or 0) or None) if p.get("price", {}).get("unit") == "LB" else None,
                         "unit_price": p.get("price", {}).get("formattedValue"),
                         "total": e.get("totalPrice", {}).get("formattedValue"),
                         "stock": p.get("stock", {}).get("stockLevelStatus"),
@@ -191,6 +230,14 @@ def cart_entries(cart):
 
 
 ADD_PACE = 3.0  # seconds between cart writes; Akamai 403s bursts of POSTs
+
+
+def cart_summary(c):
+    fee = (c.get("deliveryCost") or {}).get("value") or 0
+    sub = (c.get("subTotal") or {}).get("formattedValue")
+    tot = (c.get("totalPriceWithTax") or {}).get("formattedValue")
+    fee_s = f" + ${fee:.2f} pickup fee (waived at $35)" if fee else ""
+    return f"subtotal {sub}{fee_s} = {tot} | items: {c.get('totalItems')}"
 
 
 def add_to_cart(s, upc, qty=1):
@@ -418,7 +465,7 @@ def main():
             else:
                 q = f"{e['qty']:g} x"
             print(f"#{e['entry']:<3} {q:>14}  {e['name']}  ({e['upc']})  {e['total']}{flag}")
-        print("total:", c.get("totalPriceWithTax", {}).get("formattedValue"), "| items:", c.get("totalItems"))
+        print(cart_summary(c))
         return
     st = userstate(s)
     if not st["isUserSignedIn"]:
@@ -464,8 +511,9 @@ def main():
             d = add_to_cart(s, best["upc"], qty)
             print("added:", d["entry"]["product"]["name"], "qty", d["entry"]["quantity"])
             time.sleep(ADD_PACE)
+        time.sleep(2)
         c = get_cart(s)
-        print("cart now:", c.get("totalItems"), "items,", c.get("totalPriceWithTax", {}).get("formattedValue"))
+        print("cart now:", cart_summary(c))
 
 
 if __name__ == "__main__":

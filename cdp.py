@@ -2,7 +2,8 @@
 import asyncio, json, urllib.request, itertools, sys
 import websockets
 
-CDP = "http://127.0.0.1:9444"
+import os
+CDP = f"http://127.0.0.1:{os.environ.get('MEIJER_CDP_PORT', '9444')}"
 
 def pages():
     return [t for t in json.load(urllib.request.urlopen(f"{CDP}/json/list")) if t["type"] == "page"]
